@@ -551,7 +551,6 @@ to prevent shell globbing.
 
 	switch typ {
 	case "struct":
-		fmt.Println(name, typ)
 		fns, err := methods(name, *flagSrcDir)
 		if err != nil {
 			fatal(err)
