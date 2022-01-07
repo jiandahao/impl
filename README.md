@@ -1,14 +1,16 @@
-`impl` generates method stubs for implementing an interface or extracting an interfacce.
+`impler` generates method stubs for implementing an interface or extracting an interfacce. It's based on [`impl`](https://github.com/josharian/impl)
 
+Installation:
 ```bash
-go get -u github.com/jiandahao/impl
+go get -u github.com/jiandahao/impler
+go install github.com/jiandahao/impler
 ```
 
 Sample usage:
 
 - implementing an interface
 ```bash
-$ impl 'f *File' iface io.ReadWriteCloser
+$ impler 'f *File' iface io.ReadWriteCloser
 func (f *File) Read(p []byte) (n int, err error) {
 	panic("not implemented")
 }
@@ -32,7 +34,7 @@ func (s *Source) Token() (*oauth2.Token, error) {
 
 - extracting an interface
 ```bash
-$ impl myinterface struct time.Ticker
+$ impler myinterface struct time.Ticker
 
 type myinterface interface {
 
@@ -47,5 +49,4 @@ type myinterface interface {
 }
 ```
 
-You can use `impl` from Vim with [vim-go](https://github.com/fatih/vim-go) or
-[vim-go-impl](https://github.com/rhysd/vim-go-impl)
+You can use `impler` from VSCode with [vscode-go-impl-methods](https://github.com/jiandahao/vscode-go-impl-methods) plugin.
