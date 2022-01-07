@@ -401,19 +401,19 @@ func methods(structure string, srcDir string) ([]Func, error) {
 }
 
 var tmplStub = template.Must(template.New("test").Parse(`
-	{{if .Comments}}{{.Comments}}{{end}}
-	func ({{.Recv}}) {{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}}) {
-		panic("not implemented") // TODO: Implement"
-	}
+{{if .Comments}}{{.Comments}}{{end}}
+func ({{.Recv}}) {{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}}) {
+	panic("not implemented") // TODO: Implement"
+}
 `))
 
 var abstStub = template.Must(template.New("abst").Parse(`
-	type {{ .Name }} interface {
-		{{ range .Funcs }}
-			{{if .Comments}}{{.Comments}}{{end}}
-			{{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}})
-		{{ end }}
-	}
+type {{ .Name }} interface {
+	{{ range .Funcs }}
+		{{if .Comments}}{{.Comments}}{{end}}
+		{{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}})
+	{{ end }}
+}
 `))
 
 // genImplStubs prints nicely formatted method stubs
