@@ -17,39 +17,43 @@ func (b errBool) String() string {
 	return "no error"
 }
 
-func TestFindInterface(t *testing.T) {
+func TestFindInterfaceOrStructure(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		iface   string
-		path    string
-		id      string
-		wantErr bool
+		ifaceOrStruct string
+		path          string
+		id            string
+		wantErr       bool
 	}{
-		{iface: "net.Conn", path: "net", id: "Conn"},
-		{iface: "http.ResponseWriter", path: "net/http", id: "ResponseWriter"},
-		{iface: "net.Tennis", wantErr: true},
-		{iface: "a + b", wantErr: true},
-		{iface: "a/b/c/", wantErr: true},
-		{iface: "a/b/c/pkg", wantErr: true},
-		{iface: "a/b/c/pkg.", wantErr: true},
-		{iface: "a/b/c/pkg.Typ", path: "a/b/c/pkg", id: "Typ"},
-		{iface: "a/b/c/pkg.Typ.Foo", wantErr: true},
+		{ifaceOrStruct: "net.Conn", path: "net", id: "Conn"},
+		{ifaceOrStruct: "http.ResponseWriter", path: "net/http", id: "ResponseWriter"},
+		{ifaceOrStruct: "net.Tennis", wantErr: true},
+		{ifaceOrStruct: "a + b", wantErr: true},
+		{ifaceOrStruct: "a/b/c/", wantErr: true},
+		{ifaceOrStruct: "a/b/c/pkg", wantErr: true},
+		{ifaceOrStruct: "a/b/c/pkg.", wantErr: true},
+		{ifaceOrStruct: "a/b/c/pkg.Typ", path: "a/b/c/pkg", id: "Typ"},
+		{ifaceOrStruct: "a/b/c/pkg.Typ.Foo", wantErr: true},
+		{ifaceOrStruct: "time.Ticker", path: "time", id: "Ticker", wantErr: false},
+		{ifaceOrStruct: "net.IPAddr", path: "net", id: "IPAddr", wantErr: false},
+		{ifaceOrStruct: "json.Decoder", path: "encoding/json", id: "Decoder", wantErr: false},
+		{ifaceOrStruct: "time.Ticksss", wantErr: true},
 	}
 
 	for _, tt := range cases {
 		tt := tt
-		t.Run(tt.iface, func(t *testing.T) {
+		t.Run(tt.ifaceOrStruct, func(t *testing.T) {
 			t.Parallel()
-			path, id, err := findInterface(tt.iface, ".")
+			path, id, err := findInterfaceOrStructure(tt.ifaceOrStruct, ".")
 			gotErr := err != nil
 			if tt.wantErr != gotErr {
-				t.Fatalf("findInterface(%q).err=%v want %s", tt.iface, err, errBool(tt.wantErr))
+				t.Fatalf("findInterface(%q).err=%v want %s", tt.ifaceOrStruct, err, errBool(tt.wantErr))
 			}
 			if tt.path != path {
-				t.Errorf("findInterface(%q).path=%q want %q", tt.iface, path, tt.path)
+				t.Errorf("findInterface(%q).path=%q want %q", tt.ifaceOrStruct, path, tt.path)
 			}
 			if tt.id != id {
-				t.Errorf("findInterface(%q).id=%q want %q", tt.iface, id, tt.id)
+				t.Errorf("findInterface(%q).id=%q want %q", tt.ifaceOrStruct, id, tt.id)
 			}
 		})
 	}
@@ -556,7 +560,7 @@ func TestStubGeneration(t *testing.T) {
 		if err != nil {
 			t.Errorf("funcs(%q).err=%v", tt.iface, err)
 		}
-		src := genStubs("r *Receiver", fns, nil)
+		src := genImplStubs("r *Receiver", fns, nil)
 		if string(src) != tt.want {
 			t.Errorf("genStubs(\"r *Receiver\", %+#v).src=\n%s\nwant\n%s\n", fns, string(src), tt.want)
 		}
@@ -600,9 +604,78 @@ func TestStubGenerationForImplemented(t *testing.T) {
 			if err != nil {
 				t.Errorf("ifuncs.err=%v", err)
 			}
-			src := genStubs(tt.recv, fns, implemented)
+			src := genImplStubs(tt.recv, fns, implemented)
 			if string(src) != tt.want {
 				t.Errorf("genStubs(\"r *Implemented\", %+#v).src=\n\n%s\n\nwant\n\n%s\n\n", fns, string(src), tt.want)
+			}
+		})
+	}
+}
+
+/*
+	{ifaceOrStruct: "time.Ticker", path: "time", id: "Ticker", wantErr: false},
+	{ifaceOrStruct: "net.IPAddr", path: "net", id: "IPAddr", wantErr: false},
+	{ifaceOrStruct: "json.Decoder", path: "encoding/json", id: "Decoder", wantErr: false},
+	{ifaceOrStruct: "time.Ticksss", wantErr: true},
+*/
+func TestMethods(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		structure string
+		want      []Func
+		wantErr   bool
+	}{
+		{
+			structure: "time.Ticker",
+			want: []Func{
+				{
+					Name:   "Stop",
+					Params: nil,
+					Res:    nil,
+				},
+				{
+					Name:   "Reset",
+					Params: []Param{{Name: "d", Type: "time.Duration"}},
+					Res:    nil,
+				},
+			},
+		},
+		{
+			structure: "net.IPAddr",
+			want: []Func{
+				{
+					Name: "Network",
+					Res:  []Param{{Type: "string"}},
+				},
+				{
+					Name:   "String",
+					Params: nil,
+					Res:    []Param{{Type: "string"}},
+				},
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.structure, func(t *testing.T) {
+			t.Parallel()
+			fns, err := methods(tt.structure, "")
+			gotErr := err != nil
+			if tt.wantErr != gotErr {
+				t.Fatalf("funcs(%q).err=%v want %s", tt.structure, err, errBool(tt.wantErr))
+			}
+
+			if len(fns) != len(tt.want) {
+				t.Errorf("funcs(%q).fns=\n%v\nwant\n%v\n", tt.structure, fns, tt.want)
+			}
+			for i, fn := range fns {
+				if fn.Name != tt.want[i].Name ||
+					!reflect.DeepEqual(fn.Params, tt.want[i].Params) ||
+					!reflect.DeepEqual(fn.Res, tt.want[i].Res) {
+
+					t.Errorf("funcs(%q).fns=\n%v\nwant\n%v\n", tt.structure, fns, tt.want)
+				}
 			}
 		})
 	}

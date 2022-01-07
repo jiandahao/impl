@@ -24,45 +24,45 @@ var (
 	flagSrcDir = flag.String("dir", "", "package source directory, useful for vendored code")
 )
 
-// findInterface returns the import path and identifier of an interface.
-// For example, given "http.ResponseWriter", findInterface returns
+// findInterfaceOrStructure returns the import path and identifier of an interface or a structure.
+// For example, given "http.ResponseWriter", findInterfaceOrStructure returns
 // "net/http", "ResponseWriter".
-// If a fully qualified interface is given, such as "net/http.ResponseWriter",
+// If a fully qualified interface or a structure is given, such as "net/http.ResponseWriter",
 // it simply parses the input.
-// If an unqualified interface such as "UserDefinedInterface" is given, then
-// the interface definition is presumed to be in the package within srcDir and
-// findInterface returns "", "UserDefinedInterface".
-func findInterface(iface string, srcDir string) (path string, id string, err error) {
-	if len(strings.Fields(iface)) != 1 {
-		return "", "", fmt.Errorf("couldn't parse interface: %s", iface)
+// If an unqualified interface or a structure such as "UserDefinedInterface" is given, then
+// the definition is presumed to be in the package within srcDir and
+// findInterfaceOrStructure returns "", "UserDefinedInterface".
+func findInterfaceOrStructure(ifaceOrstruct string, srcDir string) (path string, id string, err error) {
+	if len(strings.Fields(ifaceOrstruct)) != 1 {
+		return "", "", fmt.Errorf("couldn't parse : %s", ifaceOrstruct)
 	}
 
 	srcPath := filepath.Join(srcDir, "__go_impl__.go")
 
-	if slash := strings.LastIndex(iface, "/"); slash > -1 {
+	if slash := strings.LastIndex(ifaceOrstruct, "/"); slash > -1 {
 		// package path provided
-		dot := strings.LastIndex(iface, ".")
+		dot := strings.LastIndex(ifaceOrstruct, ".")
 		// make sure iface does not end with "/" (e.g. reject net/http/)
-		if slash+1 == len(iface) {
-			return "", "", fmt.Errorf("interface name cannot end with a '/' character: %s", iface)
+		if slash+1 == len(ifaceOrstruct) {
+			return "", "", fmt.Errorf("name cannot end with a '/' character: %s", ifaceOrstruct)
 		}
 		// make sure iface does not end with "." (e.g. reject net/http.)
-		if dot+1 == len(iface) {
-			return "", "", fmt.Errorf("interface name cannot end with a '.' character: %s", iface)
+		if dot+1 == len(ifaceOrstruct) {
+			return "", "", fmt.Errorf("name cannot end with a '.' character: %s", ifaceOrstruct)
 		}
 		// make sure iface has exactly one "." after "/" (e.g. reject net/http/httputil)
-		if strings.Count(iface[slash:], ".") != 1 {
-			return "", "", fmt.Errorf("invalid interface name: %s", iface)
+		if strings.Count(ifaceOrstruct[slash:], ".") != 1 {
+			return "", "", fmt.Errorf("invalid name: %s", ifaceOrstruct)
 		}
-		return iface[:dot], iface[dot+1:], nil
+		return ifaceOrstruct[:dot], ifaceOrstruct[dot+1:], nil
 	}
 
-	src := []byte("package hack\n" + "var i " + iface)
+	src := []byte("package hack\n" + "var i " + ifaceOrstruct)
 	// If we couldn't determine the import path, goimports will
 	// auto fix the import path.
 	imp, err := imports.Process(srcPath, src, nil)
 	if err != nil {
-		return "", "", fmt.Errorf("couldn't parse interface: %s", iface)
+		return "", "", fmt.Errorf("couldn't parse: %s", ifaceOrstruct)
 	}
 
 	// imp should now contain an appropriate import.
@@ -73,10 +73,10 @@ func findInterface(iface string, srcDir string) (path string, id string, err err
 		panic(err)
 	}
 
-	qualified := strings.Contains(iface, ".")
+	qualified := strings.Contains(ifaceOrstruct, ".")
 
 	if len(f.Imports) == 0 && qualified {
-		return "", "", fmt.Errorf("unrecognized interface: %s", iface)
+		return "", "", fmt.Errorf("unrecognized: %s", ifaceOrstruct)
 	}
 
 	if !qualified {
@@ -125,6 +125,68 @@ type Pkg struct {
 type Spec struct {
 	*ast.TypeSpec
 	ast.CommentMap
+}
+
+func typeMethods(path string, id string, srcDir string) ([]Func, error) {
+	var pkg *build.Package
+	var err error
+
+	if path == "" {
+		pkg, err = build.ImportDir(srcDir, 0)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't find package in %s: %v", srcDir, err)
+		}
+	} else {
+		pkg, err = build.Import(path, srcDir, 0)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't find package %s: %v", path, err)
+		}
+	}
+
+	fset := token.NewFileSet() // share one fset across the whole package
+	p := Pkg{Package: pkg, FileSet: fset}
+	var files []string
+	files = append(files, pkg.GoFiles...)
+	files = append(files, pkg.CgoFiles...)
+	var funcs []Func
+	for _, file := range files {
+		f, err := parser.ParseFile(fset, filepath.Join(pkg.Dir, file), nil, parser.ParseComments)
+		if err != nil {
+			continue
+		}
+		cmap := ast.NewCommentMap(fset, f, f.Comments)
+
+		for _, decl := range f.Decls {
+			fdecl, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+
+			if fdecl == nil || fdecl.Recv == nil || len(fdecl.Recv.List) != 1 {
+				continue
+			}
+
+			recv := fdecl.Recv.List[0]
+			recvTyp, ok := recv.Type.(*ast.StarExpr)
+			if !ok {
+				continue
+			}
+
+			x, ok := recvTyp.X.(*ast.Ident)
+			if !ok {
+				continue
+			}
+
+			if x.Name != id {
+				continue
+			}
+
+			if fdecl.Name.Name[0] > 'A' && fdecl.Name.Name[0] < 'Z' {
+				funcs = append(funcs, p.parseFuncSig(fdecl.Name.Name, fdecl.Type, cmap.Filter(decl)))
+			}
+		}
+	}
+	return funcs, nil
 }
 
 // typeSpec locates the *ast.TypeSpec for type id in the import path.
@@ -241,8 +303,13 @@ type Param struct {
 }
 
 func (p Pkg) funcsig(f *ast.Field, cmap ast.CommentMap) Func {
-	fn := Func{Name: f.Names[0].Name}
 	typ := f.Type.(*ast.FuncType)
+
+	return p.parseFuncSig(f.Names[0].Name, typ, cmap)
+}
+
+func (p Pkg) parseFuncSig(name string, typ *ast.FuncType, cmap ast.CommentMap) Func {
+	fn := Func{Name: name}
 	if typ.Params != nil {
 		for _, field := range typ.Params.List {
 			for _, param := range p.params(field) {
@@ -260,9 +327,12 @@ func (p Pkg) funcsig(f *ast.Field, cmap ast.CommentMap) Func {
 			fn.Res = append(fn.Res, p.params(field)...)
 		}
 	}
-	if commentsBefore(f, cmap.Comments()) {
-		fn.Comments = flattenCommentMap(cmap)
+
+	comments := cmap.Comments()
+	if len(comments) > 0 && (comments[0].Pos() < typ.Pos()) {
+		fn.Comments = strings.TrimSuffix(flattenCommentMap(cmap), "\n")
 	}
+
 	return fn
 }
 
@@ -282,7 +352,7 @@ func funcs(iface string, srcDir string) ([]Func, error) {
 	}
 
 	// Locate the interface.
-	path, id, err := findInterface(iface, srcDir)
+	path, id, err := findInterfaceOrStructure(iface, srcDir)
 	if err != nil {
 		return nil, err
 	}
@@ -319,34 +389,75 @@ func funcs(iface string, srcDir string) ([]Func, error) {
 	return fns, nil
 }
 
-const stub = "{{if .Comments}}{{.Comments}}{{end}}" +
-	"func ({{.Recv}}) {{.Name}}" +
-	"({{range .Params}}{{.Name}} {{.Type}}, {{end}})" +
-	"({{range .Res}}{{.Name}} {{.Type}}, {{end}})" +
-	"{\n" + "panic(\"not implemented\") // TODO: Implement" + "\n}\n\n"
+// methods returns the set of structure's methods.
+func methods(structure string, srcDir string) ([]Func, error) {
+	// Locate the interface.
+	path, id, err := findInterfaceOrStructure(structure, srcDir)
+	if err != nil {
+		return nil, err
+	}
 
-var tmpl = template.Must(template.New("test").Parse(stub))
+	return typeMethods(path, id, srcDir)
+}
 
-// genStubs prints nicely formatted method stubs
+var tmplStub = template.Must(template.New("test").Parse(`
+	{{if .Comments}}{{.Comments}}{{end}}
+	func ({{.Recv}}) {{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}}) {
+		panic("not implemented") // TODO: Implement"
+	}
+`))
+
+var abstStub = template.Must(template.New("abst").Parse(`
+	type {{ .Name }} interface {
+		{{ range .Funcs }}
+			{{if .Comments}}{{.Comments}}{{end}}
+			{{.Name}} ({{range .Params}}{{.Name}} {{.Type}}, {{end}}) ({{range .Res}}{{.Name}} {{.Type}}, {{end}})
+		{{ end }}
+	}
+`))
+
+// genImplStubs prints nicely formatted method stubs
 // for fns using receiver expression recv.
 // If recv is not a valid receiver expression,
-// genStubs will panic.
-// genStubs won't generate stubs for
+// genImplStubs will panic.
+// genImplStubs won't generate stubs for
 // already implemented methods of receiver.
-func genStubs(recv string, fns []Func, implemented map[string]bool) []byte {
+func genImplStubs(recv string, fns []Func, implemented map[string]bool) []byte {
 	var buf bytes.Buffer
 	for _, fn := range fns {
 		if implemented[fn.Name] {
 			continue
 		}
 		meth := Method{Recv: recv, Func: fn}
-		tmpl.Execute(&buf, meth)
+		tmplStub.Execute(&buf, meth)
 	}
 
 	pretty, err := format.Source(buf.Bytes())
 	if err != nil {
 		panic(err)
 	}
+	return pretty
+}
+
+type interfaceDecl struct {
+	Name  string
+	Funcs []Func
+}
+
+func genInterfaceStubs(ifaceName string, fns []Func) []byte {
+	var buf bytes.Buffer
+	if err := abstStub.Execute(&buf, interfaceDecl{
+		Name:  ifaceName,
+		Funcs: fns,
+	}); err != nil {
+		panic(err)
+	}
+
+	pretty, err := format.Source(buf.Bytes())
+	if err != nil {
+		panic(err)
+	}
+
 	return pretty
 }
 
@@ -374,9 +485,9 @@ func commentsBefore(field *ast.Field, cg []*ast.CommentGroup) bool {
 // This function must be used at the point when m is expected to have a single
 // element.
 func flattenCommentMap(m ast.CommentMap) string {
-	if len(m) != 1 {
-		panic("flattenCommentMap expects comment map of length 1")
-	}
+	// if len(m) != 1 {
+	// 	panic("flattenCommentMap expects comment map of length 1")
+	// }
 	var result strings.Builder
 	for _, cgs := range m {
 		for _, cg := range cgs {
@@ -404,7 +515,7 @@ func main() {
 		fmt.Fprint(os.Stderr, `
 impl generates method stubs for recv to implement iface.
 
-impl [-dir directory] <recv> <iface>
+impl [-dir directory] <recv> <type> <name>
 
 `[1:])
 		flag.PrintDefaults()
@@ -423,11 +534,11 @@ to prevent shell globbing.
 	}
 	flag.Parse()
 
-	if len(flag.Args()) < 2 {
+	if len(flag.Args()) < 3 {
 		flag.Usage()
 	}
 
-	recv, iface := flag.Arg(0), flag.Arg(1)
+	recv, typ, name := flag.Arg(0), flag.Arg(1), flag.Arg(2)
 	if !validReceiver(recv) {
 		fatal(fmt.Sprintf("invalid receiver: %q", recv))
 	}
@@ -438,19 +549,31 @@ to prevent shell globbing.
 		}
 	}
 
-	fns, err := funcs(iface, *flagSrcDir)
-	if err != nil {
-		fatal(err)
-	}
+	switch typ {
+	case "struct":
+		fmt.Println(name, typ)
+		fns, err := methods(name, *flagSrcDir)
+		if err != nil {
+			fatal(err)
+		}
 
-	// Get list of already implemented funcs
-	implemented, err := implementedFuncs(fns, recv, *flagSrcDir)
-	if err != nil {
-		fatal(err)
-	}
+		src := genInterfaceStubs(recv, fns)
+		fmt.Print(string(src))
+	case "iface":
+		fns, err := funcs(name, *flagSrcDir)
+		if err != nil {
+			fatal(err)
+		}
 
-	src := genStubs(recv, fns, implemented)
-	fmt.Print(string(src))
+		// Get list of already implemented funcs
+		implemented, err := implementedFuncs(fns, recv, *flagSrcDir)
+		if err != nil {
+			fatal(err)
+		}
+
+		src := genImplStubs(recv, fns, implemented)
+		fmt.Print(string(src))
+	}
 }
 
 func fatal(msg interface{}) {
