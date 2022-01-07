@@ -36,14 +36,14 @@ $ impl myinterface struct time.Ticker
 
 type myinterface interface {
 
-		// Stop turns off a ticker. After Stop, no more ticks will be sent.
-		// Stop does not close the channel, to prevent a concurrent goroutine
-		// reading from the channel from seeing an erroneous "tick".
-		Stop()
+	// Stop turns off a ticker. After Stop, no more ticks will be sent.
+	// Stop does not close the channel, to prevent a concurrent goroutine
+	// reading from the channel from seeing an erroneous "tick".
+	Stop()
 
-		// Reset stops a ticker and resets its period to the specified duration.
-		// The next tick will arrive after the new period elapses.
-		Reset(d time.Duration)
+	// Reset stops a ticker and resets its period to the specified duration.
+	// The next tick will arrive after the new period elapses.
+	Reset(d time.Duration)
 }
 ```
 
