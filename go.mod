@@ -1,4 +1,4 @@
-module github.com/josharian/impler
+module github.com/jiandahao/impler
 
 go 1.14
 
